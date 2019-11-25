@@ -4,8 +4,8 @@ const RADIUS = 16;
 
 export class PieChart extends React.Component<{}, {}> {
   public render() {
-    const [x, y] = this.getPoint(0.33);
-    const path = `M 0 0 L 16 0 A 16 16 0 0 1 ${x} ${y} L0 0`;
+    const [x, y] = this.getPoint(0.75);
+    const path = `M 0 0 L 16 0 A 16 16 0 0 0 ${x} ${y} L0 0`;
 
     console.log(x, y);
 
