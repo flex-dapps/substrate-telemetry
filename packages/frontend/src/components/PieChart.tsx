@@ -4,14 +4,30 @@ const RADIUS = 16;
 
 export class PieChart extends React.Component<{}, {}> {
   public render() {
-    const [x, y] = this.getPoint(0.75);
-    const path = `M 0 0 L 16 0 A 16 16 0 0 0 ${x} ${y} L0 0`;
+    const split = [1/3, 1/3, 1/3];
 
-    console.log(x, y);
+    let end = -0.25;
+    let ex = 0;
+    let ey = -RADIUS;
+
+    const paths = split.map((percent, index) =>  {
+      const sx = ex;
+      const sy = ey;
+      const large = percent > 0.5 ? 1 : 0;
+
+      end += percent;
+      [ex, ey] = this.getPoint(end);
+
+      const path = `M 0 0 L ${sx} ${sy} A ${RADIUS} ${RADIUS} 0 ${large} 1 ${ex} ${ey} L0 0`;
+
+      return (
+        <path key={index} d={path} stroke="currentColor" fill="currentColor" stroke-width="1" fill-opacity="0.25" />
+      );
+    });
 
     return (
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="-16 -16 32 32" width="32" height="32">
-        <path d={path} />
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="-17 -17 34 34" width="34" height="34">
+        {paths}
       </svg>
     )
   }
