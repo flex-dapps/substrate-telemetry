@@ -1,16 +1,21 @@
 import * as React from 'react';
 
-const RADIUS = 16;
+export namespace PieChart {
+  export interface Props {
+    radius: number,
+    slices: number[],
+  }
+}
 
-export class PieChart extends React.Component<{}, {}> {
+export class PieChart extends React.Component<PieChart.Props, {}> {
   public render() {
-    const split = [1/3, 1/3, 1/3];
+    const { radius, slices } = this.props;
 
     let end = -0.25;
     let ex = 0;
-    let ey = -RADIUS;
+    let ey = -radius;
 
-    const paths = split.map((percent, index) =>  {
+    const paths = slices.map((percent, index) =>  {
       const sx = ex;
       const sy = ey;
       const large = percent > 0.5 ? 1 : 0;
@@ -18,24 +23,29 @@ export class PieChart extends React.Component<{}, {}> {
       end += percent;
       [ex, ey] = this.getPoint(end);
 
-      const path = `M 0 0 L ${sx} ${sy} A ${RADIUS} ${RADIUS} 0 ${large} 1 ${ex} ${ey} L0 0`;
+      const path = `M 0 0 L ${sx} ${sy} A ${radius} ${radius} 0 ${large} 1 ${ex} ${ey} L0 0`;
 
       return (
         <path key={index} d={path} stroke="currentColor" fill="currentColor" stroke-width="1" fill-opacity="0.25" />
       );
     });
 
+    const size = radius * 2 + 2;
+    const viewport = `${-(size / 2)} ${-(size / 2)} ${size} ${size}`;
+
     return (
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="-17 -17 34 34" width="34" height="34">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox={viewport} width={size} height={size}>
         {paths}
       </svg>
     )
   }
 
   private getPoint(percent: number): [number, number] {
+    const { radius } = this.props;
+
     return [
-      RADIUS * Math.cos(Math.PI * 2 * percent),
-      RADIUS * Math.sin(Math.PI * 2 * percent),
+      radius * Math.cos(Math.PI * 2 * percent),
+      radius * Math.sin(Math.PI * 2 * percent),
     ];
   }
 }
