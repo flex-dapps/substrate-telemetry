@@ -125,6 +125,7 @@ export class Connection {
     const getState = () => this.state;
     const afg = new AfgHandling(updateState, getState);
 
+    let nodesAddedOrRemoved = false;
     let sortByColumn: Maybe<Column> = null;
 
     if (sortBy != null) {
@@ -171,6 +172,7 @@ export class Connection {
           const node = new Node(pinned, id, nodeDetails, nodeStats, nodeHardware, blockDetails, location, connectedAt);
 
           nodes.add(node);
+          nodesAddedOrRemoved = true;
 
           break;
         }
@@ -179,6 +181,7 @@ export class Connection {
           const id = message.payload;
 
           nodes.remove(id);
+          nodesAddedOrRemoved = true;
 
           break;
         }
@@ -341,6 +344,10 @@ export class Connection {
 
     if (nodes.hasChangedSince(ref)) {
       this.state = this.update({ nodes });
+    }
+
+    if (nodesAddedOrRemoved) {
+      console.log('update version stats');
     }
 
     this.autoSubscribe();

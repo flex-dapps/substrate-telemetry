@@ -26,12 +26,13 @@ export class PieChart extends React.Component<PieChart.Props, {}> {
       const path = `M 0 0 L ${sx} ${sy} A ${radius} ${radius} 0 ${large} 1 ${ex} ${ey} L0 0`;
 
       return (
-        <path key={index} d={path} stroke="currentColor" fill="currentColor" stroke-width="1" fill-opacity="0.25" />
+        <path key={index} d={path} stroke="currentColor" fill="currentColor" strokeWidth="1" fillOpacity="0.25" />
       );
     });
 
     const size = radius * 2 + 2;
-    const viewport = `${-(size / 2)} ${-(size / 2)} ${size} ${size}`;
+    const offset = -radius -1;
+    const viewport = `${offset} ${offset} ${size} ${size}`;
 
     return (
       <svg xmlns="http://www.w3.org/2000/svg" viewBox={viewport} width={size} height={size}>
