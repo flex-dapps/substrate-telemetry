@@ -1,13 +1,14 @@
 use actix::prelude::*;
 use std::sync::Arc;
 use bytes::Bytes;
+use rustc_hash::FxHashMap;
 
 use crate::aggregator::{Aggregator, DropChain, NodeCount};
 use crate::node::{Node, connector::Initialize, message::{NodeMessage, Details}};
 use crate::feed::connector::{FeedId, FeedConnector, Subscribed, Unsubscribed};
 use crate::feed::{self, FeedMessageSerializer};
 use crate::util::{DenseMap, NumStats, now};
-use crate::types::{NodeId, NodeDetails, NodeLocation, Block, Timestamp};
+use crate::types::{NodeId, NodeDetails, NodeLocation, Block, Timestamp, BlockNumber};
 
 const STALE_TIMEOUT: u64 = 2 * 60 * 1000; // 2 minutes
 
@@ -24,6 +25,8 @@ pub struct Chain {
     nodes: DenseMap<Node>,
     /// Dense mapping of FeedId -> Addr<FeedConnector>,
     feeds: DenseMap<Addr<FeedConnector>>,
+    /// Mapping of FeedId -> Addr<FeedConnector> for feeds requiring finality info,
+    finality_feeds: FxHashMap<FeedId, Addr<FeedConnector>>,
     /// Best block
     best: Block,
     /// Finalized block
@@ -48,6 +51,7 @@ impl Chain {
             label,
             nodes: DenseMap::new(),
             feeds: DenseMap::new(),
+            finality_feeds: FxHashMap::default(),
             best: Block::zero(),
             finalized: Block::zero(),
             block_times: NumStats::new(50),
@@ -65,17 +69,18 @@ impl Chain {
         }
     }
 
+    fn broadcast_finality(&mut self) {
+        if let Some(msg) = self.serializer.finalize() {
+            for feed in self.finality_feeds.values() {
+                feed.do_send(msg.clone());
+            }
+        }
+    }
+
     /// Triggered when the number of nodes in this chain has changed, Aggregator will
     /// propagate new counts to all connected feeds
     fn update_count(&self) {
         self.aggregator.do_send(NodeCount(self.cid, self.nodes.len()));
-    }
-
-    fn update_average_block_time(&mut self, now: u64) {
-        if let Some(timestamp) = self.timestamp {
-            self.block_times.push(now - timestamp);
-            self.average_block_time = Some(self.block_times.average());
-        }
     }
 
     /// Check if the chain is stale (has not received a new best block in a while).
@@ -94,11 +99,13 @@ impl Chain {
 
         let mut best = Block::zero();
         let mut finalized = Block::zero();
+        let mut timestamp = None;
 
         for (nid, node) in self.nodes.iter_mut() {
             if !node.update_stale(threshold) {
                 if node.best().height > best.height {
                     best = *node.best();
+                    timestamp = Some(node.best_timestamp());
                 }
 
                 if node.finalized().height > finalized.height {
@@ -113,9 +120,9 @@ impl Chain {
             self.best = best;
             self.finalized = finalized;
             self.block_times.reset();
-            self.timestamp = None;
+            self.timestamp = timestamp;
 
-            self.serializer.push(feed::BestBlock(self.best.height, now, None));
+            self.serializer.push(feed::BestBlock(self.best.height, timestamp.unwrap_or_else(|| now), None));
             self.serializer.push(feed::BestFinalized(finalized.height, finalized.hash));
         }
     }
@@ -160,6 +167,12 @@ pub struct Subscribe(pub Addr<FeedConnector>);
 #[derive(Message)]
 pub struct Unsubscribe(pub FeedId);
 
+#[derive(Message)]
+pub struct SendFinality(pub FeedId);
+
+#[derive(Message)]
+pub struct NoMoreFinality(pub FeedId);
+
 /// Message sent from the NodeConnector to the Chain when it receives location data
 #[derive(Message)]
 pub struct LocateNode {
@@ -190,29 +203,34 @@ impl Handler<AddNode> for Chain {
     }
 }
 
-impl Handler<UpdateNode> for Chain {
-    type Result = ();
+impl Chain {
+    fn handle_block(&mut self, block: &Block, nid: NodeId) {
+        let mut propagation_time = None;
+        let now = now();
+        let nodes_len = self.nodes.len();
 
-    fn handle(&mut self, msg: UpdateNode, _: &mut Self::Context) {
-        let UpdateNode { nid, msg, raw } = msg;
+        self.update_stale_nodes(now);
 
-        if let Some(block) = msg.details.best_block() {
-            let mut propagation_time = None;
-            let now = now();
+        let node = match self.nodes.get_mut(nid) {
+            Some(node) => node,
+            None => return,
+        };
 
-            self.update_stale_nodes(now);
-
+        if node.update_block(*block) {
             if block.height > self.best.height {
                 self.best = *block;
                 info!(
                     "[{}] [{}/{}] new best block ({}) {:?}",
                     self.label,
-                    self.nodes.len(),
+                    nodes_len,
                     self.feeds.len(),
                     self.best.height,
                     self.best.hash,
                 );
-                self.update_average_block_time(now);
+                if let Some(timestamp) = self.timestamp {
+                    self.block_times.push(now - timestamp);
+                    self.average_block_time = Some(self.block_times.average());
+                }
                 self.timestamp = Some(now);
                 self.serializer.push(feed::BestBlock(self.best.height, now, self.average_block_time));
                 propagation_time = Some(0);
@@ -222,11 +240,21 @@ impl Handler<UpdateNode> for Chain {
                 }
             }
 
-            if let Some(node) = self.nodes.get_mut(nid) {
-                if let Some(details) = node.update_block(*block, now, propagation_time) {
-                    self.serializer.push(feed::ImportedBlock(nid, details));
-                }
+            if let Some(details) = node.update_details(now, propagation_time) {
+                self.serializer.push(feed::ImportedBlock(nid, details));
             }
+        }
+    }
+}
+
+impl Handler<UpdateNode> for Chain {
+    type Result = ();
+
+    fn handle(&mut self, msg: UpdateNode, _: &mut Self::Context) {
+        let UpdateNode { nid, msg, raw } = msg;
+
+        if let Some(block) = msg.details.best_block() {
+            self.handle_block(block, nid);
         }
 
         if let Some(node) = self.nodes.get_mut(nid) {
@@ -255,6 +283,40 @@ impl Handler<UpdateNode> for Chain {
                     node.set_validator_address(authority.authority_id);
                     self.broadcast();
                     return;
+                }
+                Details::AfgFinalized(finalized) => {
+                    if let Ok(finalized_number) = finalized.finalized_number.parse::<BlockNumber>() {
+                        if let Some(addr) = node.details().validator.clone() {
+                            self.serializer.push(feed::AfgFinalized(addr, finalized_number,
+                                finalized.finalized_hash));
+                            self.broadcast_finality();
+                        }
+                    }
+                    return;
+                }
+                Details::AfgReceivedPrecommit(precommit) => {
+                    if let Ok(finalized_number) = precommit.received.target_number.parse::<BlockNumber>() {
+                        if let Some(addr) = node.details().validator.clone() {
+                            let voter = precommit.received.voter.clone();
+                            self.serializer.push(feed::AfgReceivedPrecommit(addr, finalized_number,
+                                precommit.received.target_hash, voter));
+                            self.broadcast_finality();
+                        }
+                    }
+                    return;
+                }
+                Details::AfgReceivedPrevote(prevote) => {
+                    if let Ok(finalized_number) = prevote.received.target_number.parse::<BlockNumber>() {
+                        if let Some(addr) = node.details().validator.clone() {
+                            let voter = prevote.received.voter.clone();
+                            self.serializer.push(feed::AfgReceivedPrevote(addr, finalized_number,
+                                prevote.received.target_hash, voter));
+                            self.broadcast_finality();
+                        }
+                    }
+                    return;
+                }
+                Details::AfgReceivedCommit(_) => {
                 }
                 _ => (),
             }
@@ -340,6 +402,30 @@ impl Handler<Subscribe> for Chain {
     }
 }
 
+impl Handler<SendFinality> for Chain {
+    type Result = ();
+
+    fn handle(&mut self, msg: SendFinality, _ctx: &mut Self::Context) {
+        let SendFinality(fid) = msg;
+        if let Some(feed) = self.feeds.get(fid) {
+            self.finality_feeds.insert(fid, feed.clone());
+        }
+
+        // info!("Added new finality feed {}", fid);
+    }
+}
+
+impl Handler<NoMoreFinality> for Chain {
+    type Result = ();
+
+    fn handle(&mut self, msg: NoMoreFinality, _: &mut Self::Context) {
+        let NoMoreFinality(fid) = msg;
+
+        // info!("Removed finality feed {}", fid);
+        self.finality_feeds.remove(&fid);
+    }
+}
+
 impl Handler<Unsubscribe> for Chain {
     type Result = ();
 
@@ -355,6 +441,7 @@ impl Handler<Unsubscribe> for Chain {
         }
 
         self.feeds.remove(fid);
+        self.finality_feeds.remove(&fid);
     }
 }
 
