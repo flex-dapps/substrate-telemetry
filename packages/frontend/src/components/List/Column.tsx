@@ -103,8 +103,7 @@ export namespace Column {
     width: 90,
     setting: 'implementation',
     sortBy: ({ sortableVersion }) => sortableVersion,
-    render: ({ implementation, version }) => {
-      const [semver] = version.match(SEMVER_PATTERN) || ['?.?.?'];
+    render: ({ implementation, semver, version }) => {
       const implIcon = ICONS[implementation] || unknownImplementationIcon;
 
       return (
@@ -300,7 +299,6 @@ export namespace Column {
   };
 };
 
-const SEMVER_PATTERN = /^\d+\.\d+\.\d+/;
 const BANDWIDTH_SCALE = 1024 * 1024;
 const MEMORY_SCALE = 2 * 1024 * 1024;
 const URI_BASE = window.location.protocol === 'https:'

@@ -84,6 +84,7 @@ export default class App extends React.Component<{}, State> {
       subscribed: null,
       chains: new Map(),
       nodes: new SortedCollection(Node.compare),
+      nodeVersions: new Map(),
       settings: this.settings.raw(),
       pins: this.pins.get(),
       sortBy: this.sortBy.get(),
