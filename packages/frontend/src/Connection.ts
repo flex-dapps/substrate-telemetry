@@ -166,9 +166,9 @@ export class Connection {
         }
 
         case Actions.AddedNode: {
-          const [id, nodeDetails, nodeStats, nodeHardware, blockDetails, location, connectedAt] = message.payload;
+          const [id, nodeDetails, nodeStats, nodeIO, nodeHardware, blockDetails, location, connectedAt] = message.payload;
           const pinned = this.pins.has(nodeDetails[0]);
-          const node = new Node(pinned, id, nodeDetails, nodeStats, nodeHardware, blockDetails, location, connectedAt);
+          const node = new Node(pinned, id, nodeDetails, nodeStats, nodeIO, nodeHardware, blockDetails, location, connectedAt);
 
           nodes.add(node);
 
@@ -237,7 +237,25 @@ export class Connection {
           nodes.mutAndMaybeSort(
             id,
             (node) => node.updateHardware(nodeHardware),
-            sortByColumn === Column.CPU || sortByColumn === Column.MEM || sortByColumn === Column.UPLOAD || sortByColumn === Column.DOWNLOAD,
+            sortByColumn === Column.CPU
+              || sortByColumn === Column.MEM
+              || sortByColumn === Column.UPLOAD
+              || sortByColumn === Column.DOWNLOAD,
+          );
+
+          break;
+        }
+
+        case Actions.NodeIO: {
+          const [id, nodeIO] = message.payload;
+
+          nodes.mutAndMaybeSort(
+            id,
+            (node) => node.updateIO(nodeIO),
+            sortByColumn === Column.STATE_CACHE
+              || sortByColumn === Column.DB_CACHE
+              || sortByColumn === Column.DISK_READ
+              || sortByColumn === Column.DISK_WRITE,
           );
 
           break;
